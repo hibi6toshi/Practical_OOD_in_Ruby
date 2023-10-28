@@ -136,3 +136,78 @@ classDiagram
   class MountainBike{
   }
 ```
+
+## 継承を不適切に適用する(6.3)
+
+MountainBike クラスを実装していく。
+
+最初の試みは、元の Bicycle クラスから直接派生した新しいサブクラス。
+initialize と　 spares というメソッドを実装（いわゆるオーバーライド）する。
+
+```
+class MountainBike < Bicycle
+  attr_reader :front_shock, :rear_shock
+
+  def initialize(args)
+    @front_shock = args[:front_shock]
+    @rear_shock = args[:rear_shock]
+    super(args)
+  end
+
+  def spares
+    super.merge(rear_shock: reat_shock)
+  end
+end
+```
+
+この MountainBike クラスを既存の Bicycle クラスの直下に押し込めるのはあまりにも楽観的で欠陥がある。
+MountainBike のインスタンスの中には全く役に立たないメソッドがある。
+次の例では、MountainBike に size と spares を聞いた場合に何が起こるかを示しています。
+
+```
+class MountainBike < Bicycle
+  attr_reader :front_shock, :rear_shock
+
+  def initialize(args)
+    @front_shock = args[:front_shock]
+    @rear_shock = args[:rear_shock]
+    super(args)
+  end
+
+  def spares
+    super.merge(rear_shock: rear_shock)
+  end
+end
+
+mountain_bike = MountainBike.new(
+  size: 'S',
+  front_shock: 'Manitou',
+  rear_shock: 'Fox'
+)
+
+mountain_bike.size
+# -> 'S'
+
+mountain_bike.spares
+# -> {:chain=>"10-speed",
+      :tire_size=>"23",  <-間違い
+      :tape_color=>nil,  <-不適切
+      :rear_shock=>"Fox"}
+```
+
+MountainBikeo のインスタンスがロードバイクとマウンテンバイクの振る舞いをごちゃ混ぜに含んでいることに、驚きはありません。
+**いまの Bicycle は具象クラスであり、サブクラスが作られるようには作られていない**からです。
+
+このインスタンスは、一般的な自転車の振る舞いと、ロードバイク固有の振る舞いをすべて継承することになります。一般的な振る舞いも固有の振る舞いも、当てはまるかどうかに関わらず MountainBike は継承しています。
+
+```mermaid
+classDiagram
+  Bicycle <|-- MountainBike
+  Bicycle: RoadBikeのインターフェース
+  class MountainBike{
+  }
+```
+
+MountainBike は望みもしなければ必要でもない振る舞いを継承することになる。
+この Bicycle は、MountainBike の親と MountainBike と同階層のものの両方に適する振る舞いを持っています。
+したがって Bicycle は MountainBike のスーパークラスを務めるべきではありません。
