@@ -211,3 +211,271 @@ classDiagram
 MountainBike は望みもしなければ必要でもない振る舞いを継承することになる。
 この Bicycle は、MountainBike の親と MountainBike と同階層のものの両方に適する振る舞いを持っています。
 したがって Bicycle は MountainBike のスーパークラスを務めるべきではありません。
+
+## 継承を見つける(6.4)
+
+最初は自転車という概念が一つでした。それが、単一のクラスである Bicycle としてモデル化されました。現存する Bicycle クラスは特定の種類の自転車であるロードバイクを表しています。
+すべての Bicycle がロードバイクであるアプリケーションにおいては、この名付けは申し分なく適切であり、最初のクラス名としては申し分ない。
+
+しかし、今は MountainBike が存在するので、Bicycle という名前は誤解を招く。これらの 2 つのクラス名は、継承であることを「暗に示して」います。
+
+サブクラスはスーパークラスを「特化したもの」です。MountainBike は Bicycle を上回るものであるべきでしょう。Bicycle を待ち受けるオブジェクトは。実際んクラスが何であるかなど知らずとも、MountainBike とやりとりできるべき。
+
+継承が効果を発揮するためには、次の 2 つのことが常に成立している必要があります。
+
+- モデル化しているオブジェクトが一般 - 特殊の関係を持っていること。（汎化 - 特化　ともいうらしい）
+- 正しいコーディングテクニックを使っていること。
+
+ロードバイクのコードを Bicycle の外に出して、分離した RoadBike クラスサブクラスに入れます。
+
+###　抽象的なスーパークラスをつくる
+新たなクラス図を示す。
+Bicycle が MountainBike と RoadBikeno 両方のスーパークラスとなっている。これが最終的な目標です。
+
+```mermaid
+classDiagram
+  Bicycle <|-- MountainBike
+  Bicycle <|-- RoadBike
+
+  class MountainBike{
+  }
+  class RoadBike{
+  }
+```
+
+現在、Bicycle は「抽象」クラスを表しています。抽象は「いかなる特定のインスタンスからも離れている」。
+この新しいバージョンの**Bicycle が、完全な自転車を定義することはありません。定義するのは、すべての自転車が共有するもの**のみです。
+Ruby には Java の abstract キーワードのようなものはなく、抽象クラスのインスタンス化について制約を追加できない。
+
+抽象クラスはサブクラスが作られるために存在します。抽象クラスは、サブクラス間で共有される振る舞いの共通の格納場所を提供します。そしてサブクラスが、それぞれに特化したものを用意するのです。
+
+```
+# Bicycleを抽象クラス化
+class Bicycle
+  # このクラスはもはや空となった
+  # コードはすべてRoadBikeに移された
+end
+
+class RoadBike < Bicycle
+  # いまはBicycleのサブクラス
+  # かつてのBicycleクラスからのコードをすべて含む
+end
+
+class MountainBike < Bicycle
+  # Bicycle のサブクラスのまま（Bicycleは現在空になっている）
+  # コードは何も変更されていない
+end
+```
+
+この新しい RoadBike 句タスは、Bicycle のサブクラスとして定義されています。MountainBike が依存するコードは親ではなく同階層の仲間のところに置かれるようになりました。
+
+このコードの再構成で、すべての自転車に必要とされる共通の振る舞いは RoadBike の内部の元に置かれているため、MountainBike からはアクセスできなくなっています。
+今は RoadBike がすべての共通の振る舞いを含んでいる。
+
+```mermaid
+classDiagram
+  Bicycle <|-- MountainBike
+  Bicycle <|-- RoadBike
+
+  class MountainBike{
+  }
+  class RoadBike{
+   Bicycleの振る舞い
+  }
+```
+
+共通の振る舞いを Bicycle 内に移動し、その振る舞いを効果的にサブクラス内で使うことで、この新しいクラス構造を完成させます。
+
+###　抽象的な振る舞いを昇格する
+size と spares メソッドはすべての自転車に共通します。この振る舞いは Bicycle のパブリックインターフェースに属します。
+どちらのメソッドも現在は RoadBike の下に置かれています。
+
+size の振る舞いをスーパークラス内に昇格するためには、次の例に示されるように、変更が 2 つ必要です。
+
+- 属性の読み取りメソッドと初期化のコードは RoadBike から Bicycle に移動
+- RoadBike の initialize メソッドは super への返信を追加
+
+```
+
+# 共通部分をRoadBikeからBicycleに移動
+class Bicycle
+  attr_reader :size # <- RoadBikeから昇格
+
+  def initialize(args={})
+    @size = args[:size] # <- RoadBikeから昇格
+  end
+end
+
+class RoadBike < Bicycle
+  attr_reader :tape_color
+
+  def initialize(args)
+    @tape_color = args[:tape_color]
+    super(args) # <- RoadBikeはsuperを必ず呼ばなければならなくなった
+  end
+
+  # ...
+end
+```
+
+一連のリファクタリングで、自転車の size を処理するコードがこれまで 2 回移動したことに気づくでしょう。
+最初は Bicycle にあり、次に RoadBike に「おろされ」、現在は再度 Bicycle に昇格し、「上」に戻されました。
+
+この中間の手順を飛ばし、単純にこのコード片を Bicycle の最初のコードにしてしまいたくなるかもしれません。
+しかし、この **「全てを下げてその中のいくつかを引き上げる」戦略は、このリファクタリングの重要な部分** です。
+**継承の難しさの多くは、抽象と具体を厳密に分けることに失敗することによって生じます。**
+
+Bicycle からリファクタリングを始め、その具象的なコードを分離して RoadBike に押し下ようとしたとしましょう。
+その場合、どんな失敗であれ、具象的な危険物をスーパークラスに残すことになります。
+Bicycle のコードを全て移してから始めれば、**具象的な人工物を残してしまう恐れもなく、抽象的な部分を注意深く特定し、昇格させる**ことができます。
+
+**リファクリングの戦略を決める時のみならず、設計の戦略を決める際、有用であるのは、「もし間違っているとすれば、何がおこるだろう」と
+質問することです。**
+
+### 具象から抽象に分ける
+
+RoadBike と MountainBike は両方とも独自化した spares を実装しています。RoadBike の定義は元のものと同じであり具象クラスだった Bicycle からコピーしてきたものなので今のままでも動く。
+
+```
+class RoadBike < Bicycle
+  # ...
+  def spares
+    {
+      chain: '10-speed',
+      tire_size: '23',
+      tape_color: tape_color
+    }
+  end
+end
+```
+
+MountainBike 内の spares の定義は最初にサブクラスをサブクラスを作ろうとしたときのままです。このメソッドは super を送信しており、スーパークラスも spares を実装していることを想定しています。
+
+```
+class MountainBike < Bicycle
+  # ...
+  def spares
+    super.merge(rear_shock: rear_shock)
+  end
+end
+```
+
+しかし Bicycle は、まだ spares メソッドを実装していません。したがって、spares を MountainBike に送ると NoMethodError 例外が発生します。
+
+この問題を修正するためには、Bicycle に spares メソッドを追加する必要があるが、既存のコードを RoadBike から昇格するほど単純なことではない。
+
+RoadBike の spares の実装は、かなり知識を持ちすぎている。chain と tire_size 属性はすべての自転車に共通しますが、tape_color はロードバイクだけが知るべきでしょう。
+抽象は Bicycle に昇格させ、具体的な部分は RoadBike に残るようにしましょう。
+
+すべての自転車に共通する部分、つまり、chain と tire_size だけを昇格することに注力します。
+要件は次の通り。
+
+- 自転車はチェーン（chain）とタイヤサイズ（tire_size）を持つ
+- すべての自転車はチェーンについて同じ祖基地を共有する。
+- サブクラスは、タイヤサイズについて独自の初期値を持つ。
+- サブクラスのここのインスタンスは初期値を無視し、インスタンス固有の値を保つことが許される。
+
+size、chain、tire_size を同じような方法で処理する新しいコード。
+
+```
+class Bicycle
+  attr_reader :size, :chain, :tire_size
+
+  def initialize(args)
+    @size = args[:size]
+    @chain = args[:chain]
+    @tire_size = args[:tire_size]
+  end
+
+  # ...
+end
+```
+
+RoadBike と MountainBike は attr_reader の定義を Bicycle から継承するうえ、どちらも initialize メソッド内で super を送ります。
+これで、全てにの自転車が size、chain、tire_size を理解するようになりました。これらの属性に対してそれぞれの自転車がサブクラス固有の値を用意することもできるでしょう。
+
+このコードでは、継承されることを「想定した」ものには感じられないが初期値について、2 つの要求を満たすことで、興味深いことが起こる。
+
+### テンプレートメソッドパターンを使う
+
+Bicycle の initialize メソッドをかえ、初期値を得るためにメッセージを送るようにします。具体的には、default_chain と default_tire_size というメッセージを追加します。
+
+初期値をメソッドで包み隠すのは良い習慣ですが、新しいメッセージを送る音には 2 つの目的があります。Bicycle において、これらのメッセージを送る 1 番の目的は**それらをオーバーライドすることによって、何かに特化できる機会をサブクラスに与える**ことです。
+スーパークラス内で基本の構造を定義し、サブクラス固有の貢献をるためにメッセージを送るというテクニックは、「テンプレートメソッド」パターンとして知られています。
+次のコードにおいて MountainBike と RoadBike は、この機会のうち、1 回だけ活用しています。両方ともで default_tire_size メソッドを実装していますが、どちらも default_chain メソッドは実装していません。それゆえ、**それぞれのサブクラスは、タイヤサイズには独自の初期値を用意するものの、チェーンには共通の初期値を継承します**。
+
+```
+
+class Bicycle
+  attr_reader :size, :chain, :tire_size
+
+  def initialize(args)
+    @size = args[:size]
+    @chain = args[:chain] || default_chain
+    @tire_size = args[:tire_size] || default_tire_size
+  end
+
+  def default_chain # <-共通の初期値
+    '100-speed'
+  end
+end
+
+class RoadBike < Bicycle
+  # ...
+
+  def default_tire_size
+    '23'
+  end
+end
+
+class MountainBike < Bicycle
+  # ...
+
+  def default_tire_size
+    '2.1'
+  end
+end
+```
+
+現在のコードでは、Bicycle はサブクラスの構造を提供するようになった。
+サブクラスがアルゴリズムに影響を与えることを許可する場所に関しては、Bicycle はメッセージを送るようにしています。（サブクラスでそれをオーバーロードします。）
+
+### すべてのテンプレートメソッドを実装する
+
+Bicycle の iniitalize メソッドは default_tire_size を送りますが、bicycle 自体はそれを実装していません。これが問題になる。
+
+新しくリカベントを追加する。
+以下のように default_tire_size の実装に注意を払わなかった場合、エラーになる。
+
+```
+class RecumbentBike < Bicycle
+  def default_chain
+    '9-speed'
+  end
+end
+```
+
+この問題の根源にあるのは、コードを一見するだけでは明確に把握できない要件を、Bicycle がサブクラスに課していることです。
+（Bicycle のサブクラスは、default_tire_size を「必ず」実装している必要がある。）
+対策は、テンプレートメソッドパターンを使うどのクラスも、その送信するメッセージの全てに、必ず実装を用意するようにすることです。
+
+```
+class Bicycle
+  # ...
+
+  def default_tire_size
+    raise NotImplementedError
+  end
+end
+
+# 追加の情報を明示的に与える
+
+class Bicycle
+  # ...
+
+  def default_tire_size
+    raise NotImplemetError,
+          "This #{self.class} cannot respond to:"
+  end
+end
+```
