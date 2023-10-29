@@ -479,3 +479,195 @@ class Bicycle
   end
 end
 ```
+
+## スーパークラスとサブクラス間の結合度を管理する（６.５）
+
+spares のスーパークラスでの実装は、さまざまな方法でかけます。
+これらの違いはどれほど強固にサブクラスとスーパークラスを結合するかにあります。
+
+### 結合度を理解する
+
+この最初の spares の実装は書くのは簡単ですが、最も強固に結合されたクラスを生み出します。
+
+```
+class Bicycle
+  attr_reader :size, :chain, :tire_size
+
+  def initialize(args = {})
+    @size = args[:size]
+    @chain = args[:chain]
+    @tire_size = args[:tire_size]
+  end
+
+  def spares
+    {
+      tire_size: tire_size,
+      chain: chain
+    }
+  end
+
+  def default_chain
+    '10-speed'
+  end
+
+  def default_tire_size
+    raise NotImplementedError
+  end
+end
+
+class RoadBike < Bicycle
+  attr_reader :tape_color
+
+  def initialize(args)
+    @tape_color = args[:tape_color]
+    super(args)
+  end
+
+  def spares
+    super.merge({ tape_color: tape_color })
+  end
+
+  def default_tire_size
+    '23'
+  end
+end
+
+class MountainBike < Bicycle
+  attr_reader :front_shock, :rear_shock
+
+  def initialize(args)
+    @front_shock = args[:front_shock]
+    @rear_shock = args[:rear_shock]
+    super(args)
+  end
+
+  def spares
+    super.merge({ rear_shock: rear_shock })
+  end
+
+  def default_tire_size
+    '2.1'
+  end
+end
+```
+
+MountainBike と RoadBike サブクラスが同じようなパターンに従っていることに気づいてください。これらはそれぞれ自分自身（特化したスペアパーツ）についても、それぞれのスーパークラス（ハッシュを返す spares を実装してるということ、initialize に応答するということ）についても知っています。
+
+他のクラスについての知識を持つということは、依存を作り依存はオブジェクトを互いに結合します。
+
+次のコードはそのトラップを説明したものです。
+
+```
+
+class RecumbentBike < Bicycle
+  attr_reader :flag
+
+  def initialize(args)
+    @flag = args[:flag] # superを送信するのを忘れた
+  end
+
+  def spares
+    super.merge({ flag: flag })
+  end
+
+  def default_chain
+    '9-speed'
+  end
+
+  def default_tire_size
+    '28'
+  end
+end
+
+bent = RecumbentBike.new(flag: 'tall and orange')
+bent.spares
+# ->{
+#     tire_size: nil,  <- 初期化されてない
+#     chain: nil,
+#     flag: 'tall and orange'
+#   }
+```
+
+RecumbentBike が initialize の中で super を送るのに失敗すると、RecumbentBike は Bicycle によって提供される共通の初期あが行われないことになります。
+
+お d んなプログラマーでも super を送り忘れることはあるため、これらのエラーの原因絵を作りえるでしょう。
+
+この階層構造でのコードのパターンでは、**サブクラスは自身が行うことだけでなく、スーパークラスとどのように関わるかまで知っておくことが要求されます**。
+
+すべてのサブクラスが正確に同じ箇所で super を送ることが求められます。
+その点で、サブクラスは依存していると言える。
+
+### フックメソッドを使ってサブクラスを疎結合にする
+
+これらの問題はすべて、最後のリファクタリングを 1 つ加えれば回避できます。サブクラスにアルゴリズムを知ることを許し、super を送るよう求めるのではなく、スーパークラスが代わりに「フック」メッセージを送るようにすることができます。。
+フックメッセージはサブクラスがそれに合致するメソッドを実装することによって情報を提供できるようにするための専門のメソッドです。
+
+```
+
+class Bicycle
+  def initialize(args = {})
+    @size = args[:size]
+    @chain = args[:chain] || default_chain
+    @tire_size = args[:tire_size] || default_tire_size
+
+    post_initialize(args) # Bicycleでは送信と
+  end
+
+  def post_initialize(_args) # 実装の両方を行う
+    nil
+  end
+
+  # ...
+end
+
+class RoadBike < Bicycle
+  def post_initialize(args) # RoadBikeは任意でオーバーライドできる
+    @tape_color = args[:tape_color]
+  end
+  # ...
+end
+```
+
+→ 依存性の逆転っぽいことをしてる！！
+
+BF: サブクラスは、スーパークラスのメソッドのいくつかが、super に反応することを知っている
+AF: スーパークラスは、サブクラスがフックメソッドに反応することを知っている。（厳密にはスーパークラス何のメソッドをオーバーライドするので、違うけど。。。）
+
+この変更では、super の送信を RoadBike の initialize メソッドから取り除いたのではなく、initialize メソッドそのものをすっかり取り除いてしまいました。
+RoadBike はもはや初期化を制御することはありません。
+
+RoadBike は自身が「何を」初期化する必要があるかについての責任をまだ負っています。しかし、「いつ」初期化が行われるかには責任がありません。
+この変更によって、**RoadBike の bicycle についての知識はより少なくできます**。
+
+タイミングの制御をスーパークラスに任せると、サブクラスに変更を矯正せずともアルゴリズムを変更できるようになります。
+Bicycle が spares を実装していて、その実装がハッシュを返すという知識を RoadBike 矯正せずとも、Bicycle に制御を戻すフックメソッドを実装することで結合を緩めることができるのです。
+
+spares メソッドについても変更を加える。
+
+```
+
+class Bicycle
+  # ...
+
+  def spares
+    {
+      tire_size: tire_size,
+      chain: chain
+    }.merge(local_spares)
+  end
+
+  # サブクラスがオーバーライドするためのフック
+  def local_spares
+    {}
+  end
+end
+
+class RoadBike < Bicycle
+  # ...
+  def local_spares
+    {
+      tape_color: tape_color
+    }
+  end
+end
+```
