@@ -368,3 +368,108 @@ end
 この Parts インスタンスに＋を送ると、NoMethodError 例外が起きます。しかし、Parts は現在、size、each、そして、Enumerable の全てに応答するようになっていて、間違って Array のように扱った時にのみエラーを発生するようになっています。
 
 再度、動くバージョンの Bicycle、Parts、Part クラスを手に入れました。では、設計を再評価してみましょう。
+
+## Parts を製造する（８.３）
+
+Part オブジェクトは「chain、mountain_tire」などのように保持されています。この四行に表される知識体系について考えてみましょう。
+アプリケーションのどこかで、何らかのオブジェクトが Part オブジェクトの作り方を知っている。
+この特定の 4 つのオブジェクトがマウンテンバイク用だと知っている必要があります。
+
+この知識量はかなり多く、また、アプリケーションのあちこちに簡単に漏れるでしょう。
+個別のパーツは幾つもあるものの、有効なパーツの組み合わせはほんの一部だけです。
+ですから、**さまざまな自転車を記述し、その記述をもとに何らかの方法で、正確な Parts オブジェクトをどの自転車にも製造**できれば、全てはより簡単になるのではないでしょうか。
+
+### PartsFactory をつくる
+
+他のオブジェクトを製造するオブジェクトはファクトリーです。ファクトリーという言葉は、単に、オブジェクト指向の設計者が、他のオブジェクトを作るオブジェクト、という概念を簡潔に共有するために用いている語句に過ぎないのです。
+
+次のコードは新たに導入する PartsFactory モジュールです。
+これの仕事は、上で挙げられていたような配列を 1 つとって、Parts オブジェクトを製造することです。途中、Part オブジェクトの作成もあると思いますが、そのアクションはプライベートなものです。
+外に示す責任は、Parts を作ることです。
+この PartsFactory の最初のバージョンは、引数を 3 つ取ります。
+config が 1 つと、あとは Part と Parts に使われるクラス名です。このコードの６行目では、Parts の新しいインスタンスを作っています。config の情報をもとに作られた Part オブジェクトの配列を用いて、初期化しています。
+
+```
+module PartsFactory
+  def self.building(config,
+                    part_class = Part,
+                    parts_class = Parts)
+
+    parts_class.new(
+      config.collect do |part_config|
+        part_class.new(
+          name: part_config[0],
+          description: part_config[1],
+          needs_spare: part_config.fetch(2, true)
+        )
+      end
+    )
+  end
+end
+```
+
+このファクトリーは config 配列の構造を知っています。
+config の構造に関する知識をファクトリ内におくことによってもたらされる影響は２つあります。
+１つ目は、config をとても短く簡潔に表現できることです。Factory が config の内部構造を理解しているので、config をハッシュではなく配列で指定できます。
+２つ目は、一度 config を配列に入れると決めたのですから、Parts オブジェクトを作るときは「常に」このファクトリーを使うことが当然になることです。PartsFactory が導入されたので、設定用の配列を使い、簡単に Parts オブジェクトを作れるようになりました。
+
+```
+road_config = [
+  %w[chain 10-speed],
+  %w[tire_size 23],
+  %w[tape_color red]
+]
+
+mountain_config = [
+  ['chain', '10-speed'],
+  ['tire_size', '2.1'],
+  ['frint_shock', 'Manitou', false],
+  ['rear_shock', 'Fox']
+]
+
+road_parts = PartsFactory.new(road_config)
+mountain_parts = PartsFactory.new(mountain_config)
+```
+
+PartsFactory は、設定用の配列と組み合わされ、有効な Parts を作るために必要な知識を隔離します。
+この情報は、以前はアプリケーション全体に分散していたものでした。しかし、今はこのクラス１つと、配列２つにおさまっています。
+
+### PartsFactory を活用する
+
+PartsFactory が導入され、稼働し始めたので。Part クラスに再度焦点を当ててみましょう。
+PartsFatctory がすべての Part を作るのであれば、Part でこのコード（args.fetch(:needs_spare, true)）を持つ必要はありません。
+また、Part からこのコードを取り除いてしまえば、残るものはほとんど何もありません。
+Part クラス全体は、単純な OpenStruct で置き換えられるのです。
+
+Ruby の OpenStruct クラスは、これまで登場した Struct クラスとかなり似通っています。
+２つの違いは、Struct は初期化時に順番を指定して引数を渡す必要がある一方、OpenStruct では初期化時にハッシュをとり、そこから属性を引き出すことにあります。
+Part クラスを取り除くことにはもっともな理由があります。
+それによりコードが簡潔になり、今持っているほど複雑なものが今後一切必要無くなるのです。
+
+Part の痕跡を一切取り除くには、まず Part クラスを消し、そして PartsFactory を変え、OpenStruct を使うことで、Part「ロール」を担うオブジェクトを担うオブジェクトを作るようにします。
+
+新しいバージョンの PartsFasctory を示しています。ここでは、部品（part）の作成はリファクタリングされ、自身のメソッドになっています。
+
+```
+
+require 'ostruct'
+
+module PartsFactory
+  def self.build(config, parts_class = Parts)
+    parts_class.new(
+      config.collect |part_config|
+        create_part(part_config)
+    )
+  end
+
+  def self.create_part(part_config)
+    OpenStruct.new(
+      name: part_config[0],
+      description: part_config[1],
+      needs_spare: part_config.fetch(2, true)
+    )
+  end
+end
+```
+
+13 行目（needs_spare: part_config.fetch(2, true)）は、アプリケーション内で唯一 needs_spare のデフォルト値を true に設定する箇所になりました。そのため、Parts を製造する責任は、PartsFactory が単独で負わなければなりません。
