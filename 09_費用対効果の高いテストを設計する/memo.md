@@ -431,3 +431,91 @@ test_implements_the_dimaterizable_interface テストは、ロールに対する
 
 従って、プライベートメソッドをテストする際の大まかなルールは次のようになります。
 「プライベートメソッドは決して書かないこと。書くとすれば、絶対にそれらのテストをしないこと。ただし、当然のことながら、そうすることに意味がある場合を除く」です。従って、テストを書くことに対しては偏った見方をしましょう。
+
+## 送信メッセージをテストする（9.4）
+
+送信メッセージは「クエリ」か「コマンド」のどちらかです。クエリメッセージは、それらを送るオブジェクトにのみ問題となります。一方、コマンドメッセージは、アプリケーション内の他のオブジェクトから見える影響を及ぼします。
+
+### クエリメッセージを無視する
+
+副作用のないメッセージはクエリメッセージとして知られています。以下では、Gear の gear_inches メソッドが diameter を送っています。
+
+```
+class Gear
+  # ...
+  def gear_inches
+    ratio * wheel.diameter
+  end
+end
+```
+
+gear_inches メソッドの他に、diameter が送られたことを機にするメソッドはありません。diameter メソッドには副作用がなく、実行しても目に見える痕跡は残しません。またこの実行に依存する他のオブジェクトもありません。
+同じように、テストでは self に送られたメッセージは無視されるべきです。外に出ていくクエリメッセージもまた、無視されるべきです。diameter を送ることによる影響は Gear 内部に隠されています。アプリケーション全体としてはこのメッセージが送られる必要はないので、テストでは気にする必要がありません。
+Gear の唯一の責任は、gear_inches が正しく動くことの証明です。これは単純に gear_inches がいつも適切な値を返すことをテストすればおしまいです。
+
+### コマンドメッセージを証明する
+
+ときおり、メッセージが送られたことが問題になることがあります。アプリケーションの一部が、その結果として生じる何かに依存する場合です。この場合、テスト対象オブジェクトは、メッセージを送ることに責任を持ち、テストではそれを証明しなければなりません。
+
+あるゲームがあるとします。プレイヤーは仮想の自転車でレースをします。自転車はギアを持ちます。Gear クラスはプレイヤーがギアを変えたことをアプリケーションに知らせる責任を負います。そうすることで、アプリケーションは自転車の振る舞いを更新できます。
+次のコードでは、Gear は observer を追加することで、この要件を満たしています。プレイヤーがギアウィ変えると、set_cog や set_chainring メソッドが実行されます。これらのメソッドは新しい値を保存し、そして Gear の changed メソッドを実行します。するとこのメソッドは changed を observer に送ります。その際、現在のチェーンリングとコグも合わせて送ります。
+
+```
+class Gear
+  attr_reader :chainrnig, :cog, :wheel, :observer
+
+  def initialize(args)
+    # ...
+    @observer = args[:observer]
+  end
+
+  # ...
+  def set_cog(new_cog)
+    @cog = new_cog
+    changed
+  end
+
+  def set_chainring(new_chainring)
+    @chainring = new_chainring
+    changed
+  end
+
+  def changed
+    observer.chanded(chainring, cog)
+  end
+end
+```
+
+Gear に新しい責任が増えました。コグやチェーンリングが変わったときは、必ず observer に通知する必要があります。アプリケーションが正しくあるためには。Gear が observer に changed を送る必要があります。テストは、このメッセージが送られたことを証明すべきです。
+その際、ただ証明するだけではいけません。observer の changed メソッドの戻り値についての表明はせずに、証明すべきです。observer のテストが、changed メソッドの結果を明らかにする責任を負います。メッセージの戻り値に対するテストを行う責任は、その受け手にあります。
+重複を避けるには、戻り値の確認をせずとも Gear が changed を observer に送ることを証明できる方法が必要です。幸いにも、これは簡単です。ここで「モック」が必要となります。状態のテストとは対照的に、モックは、振る舞いのテストです。メッセージが送られるという期待を定義します。
+
+下のテストは、Gear が自身の責任を果たすこと、及び、その際 observer の振る舞い方の詳細に結びついていないこと、を証明します。テストではモックを作り observer の代わりに挿入しています。それぞれのテストメソッドではモックに changed メッセージを受け取ることを期待するように伝え、確かに受け取ったことを確認します。
+
+```
+class GearTest < MiniTest::Unit::TestCase
+  def set_up
+    @observer = MiniTest::Mock.new
+    @gear = Gear.new(
+      chainring: 52,
+      cog: 11,
+      observer: @observer
+    )
+  end
+
+  def test_notifies_observers_when_cogs_change
+    @observer.expect(:changed, true, [52, 27])
+    @gear.set_cog(27)
+    @observer.verify
+  end
+
+  def test_notifies_observers_when_chainring_change
+    @observer.expect(:changed, true, [42, 11])
+    @gear.set_chainring(42)
+    @observer.verify
+  end
+end
+```
+
+これはモックの典型的な使い方です。上記の test_notifies_observers_when_cogs_change テストでは、12 行目でモックにどのメッセージを期待するかを伝え、13 行目でこの期待が満たされるべき振る舞いを実行しています。そして 14 行目で、本当に満たされたかをモックに確認するように伝えています。テストがパスするのは、set_cog を gear に送ることで、与えられた引数で observer が changed を受け取る何かが実行されるときのみです。
+モックはメッセージに対して、それを受け取ったことの記憶しかついていないことに気づいてください。テスト対象のオブジェクトが、observer が changed を受け取った時の戻り値に依存しているときは、適切な値を返すようにモックを設定せきます。しかし、この戻り値は重要ではありません。モックはメッセージが送られたことを証明するためのものであり、結果を返すのはテスト進行に必要なときのみです。
