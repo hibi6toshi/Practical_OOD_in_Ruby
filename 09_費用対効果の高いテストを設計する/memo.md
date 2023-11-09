@@ -519,3 +519,278 @@ end
 
 これはモックの典型的な使い方です。上記の test_notifies_observers_when_cogs_change テストでは、12 行目でモックにどのメッセージを期待するかを伝え、13 行目でこの期待が満たされるべき振る舞いを実行しています。そして 14 行目で、本当に満たされたかをモックに確認するように伝えています。テストがパスするのは、set_cog を gear に送ることで、与えられた引数で observer が changed を受け取る何かが実行されるときのみです。
 モックはメッセージに対して、それを受け取ったことの記憶しかついていないことに気づいてください。テスト対象のオブジェクトが、observer が changed を受け取った時の戻り値に依存しているときは、適切な値を返すようにモックを設定せきます。しかし、この戻り値は重要ではありません。モックはメッセージが送られたことを証明するためのものであり、結果を返すのはテスト進行に必要なときのみです。
+
+## ダックタイプをテストする（9.5）
+
+ダックタイプをテストする方法を探っていく。「ロールの担い手が共有できるテスト」の書き方を学ぶ。
+
+### ロールをテストする
+
+この最初のコードは、Preparer ダックタイプのものです。最初のいくつかのコード例は、第 5 章での学びを反復します。
+
+```
+class Mechanic
+  def prepare_bicycle(bicycle)
+    # ...
+  end
+end
+
+class TripCoordinator
+  def buy_food(customers)
+    # ...
+  end
+end
+
+class Driver
+  def gas_up(vehicle)
+    # ...
+  end
+
+  def fill_water_tank(vehicle)
+    # ...
+  end
+end
+```
+
+これらのクラスはぞれぞれ、理にかなったパブリックインターフェースを持ちます。しかし、下に示す通り、Trip がそれらのインターフェースを使うときは、それぞれのオブジェクトのクラスを確認し、どのメッセージを送るかを確認しなければなりませんでした。
+
+```
+class Trip
+  attr_reader :bicycles, :customers, :vehicle
+
+  def prepare(prepares)
+    prepares.each do |preparer|
+      case preparer
+      when Mechanic
+        preparer.prepare_bicycles(bicycles)
+      when TripCoordinator
+        preparer.buy_food(customers)
+      when Driver
+        preparer.gas_up(vehicle)
+        preparer.fill_water_tank(vehicle)
+      end
+    end
+  end
+end
+```
+
+上記の case 文が、今存在する 3 つの具象クラスに prepare を結合しています。このメソッドのテストは辛く、メンテナンスコストも高くつきます。
+このアンチパターンを使いつつもテストがないコードに遭遇した場合、テストを書く前にリファクタリングをして、より良い設計にすることを考えましょう。
+
+リファクタリングの第一歩は、Preparer のインターフェースを決め、そのインターフェースをロールの担い手すべてに実装することです。Preparer のパブリックインターフェースが prepare_trip であれば、以下の変更により Mechanic、TripCoordinator、Driver がロールを担えるようになります。
+
+```
+class Mechanic
+  def prepare_trip(trip)
+    trip.bicycles.each { |bicycle| prepare_bicycle(bicycle) }
+  end
+
+  # ...
+end
+
+class TripCoordinator
+  def prepare_trip(trip)
+    buy_food(trip.customers)
+  end
+
+  # ...
+end
+
+class Driver
+  def prepare_trip(trip)
+    vehicle = trip.vehicle
+    gas_up(vehicle)
+    fill_water_tank(vehicle)
+  end
+
+  # ...
+end
+```
+
+これで Prepares（Prepare の集まり）が存在するようになったので、Trip の prepare メソッドは、はるかに簡潔にできます。
+
+```
+class Trip
+  attr_reader :bicycles, :customers, :vehicle
+
+  def prepare(preparers)
+    preparers.each { |preparer| preparer.preparer_trip(self) }
+  end
+end
+```
+
+リファクタリングを完了したので、次はテストを書かねばなりません。上記のコードで協力しているのは、Preparer と（現在は Preparable の 1 つ
+と考えられる）Trip です。テストで記述するべきことは Preparer ロールの存在であり、証明すべきことは、ロールの担い手がそれぞれが正しく振る舞い、Trip がそれらと適切に協力することです。
+Preparer として振る舞うクラスはいくつかあります。ロールのテストは一度だけ書き、すべての担い手間で共有されるようにすべきでしょう。テストの共有は、Ruby のモジュールを使う。
+
+```
+module PreparerInterfaceTest
+  def test_implements_the_preparer_interface
+    assert_respond_to(@object, :prepare_tirp)
+  end
+end
+```
+
+このモジュールが証明するのは＠object が prepare_trip へ応答することです。次のテストでは、このモジュールを Preparer であることを証明するために使っています。モジュールをインクルードし、セットアップ中に＠object 変数を経由して Mechanic を用意します。
+
+```
+class MechanicTest < MiniTest::Unit::TestCese
+  include PreparerInterfaceTest
+
+  def set_up
+    @mechanic = @object = Mechanic.new
+  end
+
+  # @mechanic に依存する他のテスト
+end
+
+class TripCoordinatorTest < MiniTest::Unit::TestCase
+  include PrepareInterfaceTest
+
+  def set_up
+    @trip_coordinator = @object = TripCoordinator.new
+  end
+end
+
+class DriverTest < MiniTest::Unit::TestCase
+  include PrepareInterfaceTest
+  def set_up
+    @driver = @object = Driver.new
+  end
+end
+```
+
+これら 3 つのテストを実行すると、満足のいく結果が得られるはずです。
+
+PreparerInterfaceTest をモジュールとして定義することで、テストを一度だけ書けば、ロールを担うすべてのオブジェクトで再利用できます。モジュールはテストとドキュメントの両方の役割を果たします。ロールの可能性を高め、新たに作られた Preparer のどれもが、その責任を首尾よく満たすことを簡単に証明できるようになります。
+この test_implements_the_preparer_interface メソッドがテストするのは、受信メッセージ、つまり受信オブジェクトのテストに属するメッセージです。そのため、Mechanic、TripCoordinator、Driver のテストにモジュールがインクルードされます。しかし、受信メッセージは送信メッセージと互いに連携しているので、この両方をテストすべきです。今証明しているのは、すべての受け手が prepare_trip を正しく実装していることです。つぎは Trip が正しくそれを送っていることを同様に証明せねばなりません。
+
+```
+class TripTest < MiniTest::Unit::TestCase
+  def test_requests_trip_preparation
+    @preparer = MiniTest::Mock.new
+    @trip = Trip.new
+    @preparer.expect(:prepare_trip, nil, [@trip])
+
+    @trip.prepare([@preparer])
+    @preparer.verify
+  end
+end
+```
+
+この test_requests_trip_preparation テストは、モジュールを経由することなく TripTest 内に直接存在します。Trip はアプリケーションに存在する唯一の Preparable なので、テストを共有するオブジェクトはありません。他の Preparable が増えたとき、テストをモジュールに切り出し、Preparable 間で共有すべきです。
+
+### ロールを使ったダブルのバリデーション
+
+使わなくなったメソッドをスタブしたテストダブルが原因で、失敗するべきテストが成功してまった。
+このテストの問題は、DiameterDouble が Diamterizable ロールを担うと主張するものの、実際はその主張は間違っていることにあります。Diameterizable のインターフェースが変わったので、DiameterDouble はもう古いのです。
+最後に WheelTest を見たのは、「テストを使ってロールを文章化する」でした。Dimαterizable インターフェースの歌詞性を高めることで、この問題に立ち向かおうとしたところです。
+6 行目にて Wheel が width を実装する Diameterizable のように振る舞うことを証明しています。
+
+```
+class WheelTest < MiniTest::Unit::TestCase
+  def seti_up
+    @wheel = Wheel.new(26, 1.5)
+  end
+
+  def test_implements_the_diameterizable_interface
+    assert_respond_to(@wheel, :width)
+  end
+
+  def test_calculates_diameter
+    # ...
+  end
+end
+```
+
+このテストには、壊れやすい問題を解決するために必要なピースがそろっています。ロールの担い手間でテストを共有する方法はわかっていますし、Diamaterizable ロールの担い手が 2 つあることも認識しています。手元にはどのオブジェクトにも使える、ロール wp 正しくになっているかの証明に使えるテストがあります。
+この問題をとく最初のステップは、test_implements_the_diameterizable_interface を Wheel からそれ自身のモジュールに切り出すことです。
+
+```
+module DiameterizableInterfaceTest
+  def test_implements_the_diameterizable_interface
+    assert_respond_to(@object, :width)
+  end
+end
+```
+
+一度このモジュールができれば、切り出された振る舞いを再度 WheelTest に導入するのは簡単なことです。モジュールをインクルードし、@object を Wheel で初期化するだけです。
+
+```
+
+class WheelTest < MiniTest::Unit::TestCase
+  include DiameterizableinterfaceTest
+
+  def set_up
+    @wheel = @object = Wheel.new(26, 1.5)
+  end
+
+  def test_calculates_diameter
+    # ...
+  end
+end
+```
+
+この時点で WheelTest は、振る舞いの切り出しを行う以前と全く同様に動作します。
+Diαmaterizable が正しく振る舞うことを証明する独立したモジュールを手に入れたので、今度はそのモジュールを、テストダブルがひっそりと古くなってしまうことを防ぐために使えます。
+次の GearTest はこの新しいモジュールを使うようにしたものです。DiameterDoubleTest の目的は、ダブルの継続的な正しさを保証することで、テストが壊れやすくなるのを防ぐことです。
+(→DimeterDouble が Diameterizable に追従しているかを確認するテストを書き、実装とテストのずれをなくす)
+
+```
+class DiamterDouble
+  def diameter
+    10
+  end
+end
+
+# 該当のtest doubleがこのテストの期待するインターフェースを守ることを証明する
+class DiameterDoubleTest < MiniTest::Unit::TestCase
+  inculde DiameterizableInterfaceTest
+
+  def set_up
+    @object = DiameterDouble.new
+  end
+end
+
+class GearTest < MiniTest::Unit::TestCase
+  def test_calculates_gear_inches
+    gear = Gear.new(
+      chainring: 52,
+      cog: 11,
+      wheel: DiameterDouble.new
+    )
+
+    assert_in_delta(47.27,
+                    gear.gear_inches,
+                    0.01)
+  end
+end
+```
+
+DiameterDouble と Gear の両方が間違っているという事実によって、このテストの以前のバージョンではテストを通すことができました。現在は、ダブルは正直にそのロールを担うことが証明されていることから、テストの実行によって、ついにエラーが生じるようになりました。
+DiameterDoubleTest が失敗し、DiameterDouble が間違いであることを通知します。この失敗が DiamαterDouble を修正し、width を実装することを促してくれます。
+
+```
+class DiameterDouble
+  def width
+    10
+  end
+end
+```
+
+この変更後にテストを再実行すると、テストは GearTest で失敗します。
+この失敗は Gear 内の問題を起こしているコード行をはっきり示します。これでようやく、次の例にあるように、diameter の代わりに width を送るために Gear の gear_inches メソッドを変えるようテストが伝えるようになりました。
+
+```
+class Gear
+  def gear_inches
+    # diameterではなくwidthに
+    ratio * wheel.width
+  end
+
+  # ...
+end
+```
+
+この最終の変更をしてしまえば、アプリケーションは正しくなり、すべてのテストは正しく通ります。
+テストはただ通るだけではなく、Diameterizable のインターフェースに何が起ころうとも、適切に成功（もしくは失敗）し続けます。テストダブルをロールの他の担い手と同じように扱い、テストでその正しさを証明するのであれば、テストの壊れやすさは回避でき、影響を機にすることなくスタブができるでしょう。
