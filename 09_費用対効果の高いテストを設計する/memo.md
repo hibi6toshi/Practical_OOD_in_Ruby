@@ -794,3 +794,273 @@ end
 
 この最終の変更をしてしまえば、アプリケーションは正しくなり、すべてのテストは正しく通ります。
 テストはただ通るだけではなく、Diameterizable のインターフェースに何が起ころうとも、適切に成功（もしくは失敗）し続けます。テストダブルをロールの他の担い手と同じように扱い、テストでその正しさを証明するのであれば、テストの壊れやすさは回避でき、影響を機にすることなくスタブができるでしょう。
+
+## 継承されたコードをテストする（9.6）
+
+継承されたコードのテスト
+
+### 継承されたインターフェースを規定する
+
+```
+class Bicycle
+  attr_reader :size, :chain, :tire_size
+
+  def initialize(args = {})
+    @size = args[:size]
+    @chain = args[:chain] || default_chain
+    @tire_size = args[:tire_size] || default_tire_size
+    post_initialize(args)
+  end
+
+  def spares
+    {
+      tire_size: tire_size,
+      chain: chain
+    }.merge(local_spares)
+  end
+
+  def default_tire_size
+    raise NotImplementedError
+  end
+
+  # subclasses may override
+  def post_initialize
+    nil
+  end
+
+  def local_spares
+    {}
+  end
+
+  def default_chain
+    '10-speed'
+  end
+end
+```
+
+次のコードは RoadBike のものです。Bicycle のサブクラスでした
+
+```
+class RoadBike < Bicycle
+  attr_reader :tape_color
+
+  def post_initialize(args)
+    @tape_color = args[:tape_color]
+  end
+
+  def local_spares
+    { tape_color: tape_color }
+  end
+
+  def default_tire_size
+    '23'
+  end
+end
+```
+
+テストの最初の目的は、この k 階層構造に属するすべてのオブジェクトが、その契約を守っていることを証明することです。リスコフの置換原則は、派生型はその上位型と置換可能であるべきと言っています。
+階層の全てのオブジェクトがリスコフの原則に従っていることを証明する最も簡単な方法は、その共通の契約に共有されるテストを書き、全てのオブジェクトにそのテストをインクルードすることです。
+
+契約は共通のインターフェースに備わっています。次のテストは、インターフェースを明確に示し、Bicycle とは何かを定義しています。
+
+```
+module BicycleInterfaceTest
+  def test_responds_to_default_tire_size
+    assert_respond_to(@object, :default_tire_size)
+  end
+
+  def test_responds_to_default_chain
+    assert_respond_to(@object, :default_chain)
+  end
+
+  def test_responds_to_chain
+    assert_respond_to(@object, :chain)
+  end
+
+  def test_responds_to_size
+    assert_respond_to(@object, :size)
+  end
+
+  def test_responds_to_tire_size
+    assert_respond_to(@object, :tire_size)
+  end
+
+  def test_responds_to_spares
+    assert_respond_to(@object, :spares)
+  end
+end
+```
+
+BicycleInterfaceTest を通るオブジェクトであれば、どれでも Bicycle のように振る舞うと信頼できます。
+
+```
+class Bicycletest < MiniTest::Unit::TestCase
+  include BicycleInterfaceTest
+
+  def setup
+    @bike = @object = Bicycle.new({ tire_size: 0 })
+  end
+end
+
+class RoadBikeTest < MiniTest::Unit::TestCase
+  include BicycleInterfacetest
+
+  def setup
+    @bike = @object = RoadBike.new
+  end
+end
+```
+
+BicycleInterfaceTest はどんな種類の Bicycle でも動作し、新たに作成されたどんなサブクラスにも簡単にインクルードできます。これにより、インターフェースは文章化され、意図しない不具合も防止されます。
+
+### サブクラスの責任を規定する
+
+Bicycle は全て共通のインターフェースを持ちますが、それだけではありません。スーパークラスの Bicycle によって、サブクラスには要件が課されます。
+
+■ サブクラスの振る舞いを確認する
+サブクラスがたくさんあるので、それぞれが要件を満たすことを証明するためには、テストを共有するべきでしょう。ここに、サブクラスに課される要件を文章化するテストを示します。
+
+```
+module BicycleSubclassTest
+  def test_responds_to_post_initialize
+    assert_responds_to(@object, :post_initialize)
+  end
+
+  def test_responds_to_local_spares
+    assert_respond_to(@object, :local_spares)
+  end
+
+  def test_responds_to_default_tire_size
+    assert_respond_to(@object, :default_tire_size)
+  end
+end
+```
+
+このテストは、bicycle のサブクラスに求められる要件をコードに落とし込んでいます。これらのメソッドをサブクラスが実装することは強制しません。実際、サブクラスの post_initialize と local_spares の継承は自由です。このテストは単に、サブクラスが突拍子もないことをして、メッセージを壊すようなことをしていないかを証明するだけです。
+
+RoadBike は bicycle のように振る舞うので、すでにそのテストでは BicycleInterfaceTest をインクルードしています。次のテストは新しく BicycleSubclassTest をインクルードするように変更したものです。RoadBike は、Bicycle のサブクラスのように振る舞うべきでしょう。
+
+```
+class RoadBikeTest < MiniTest::Unit::TestCase
+  include BicycleInterfacetest
+  include BicycleSubclassTest
+
+  def setup
+    @bike = @object = RoadBike.new
+  end
+end
+```
+
+この変更されたテストを実行すると、追加の説明がされます。
+Bicycle のサブクラスはどれも、これらの同じ 2 つのモジュールを共有できます。どのサブクラスも Bicycle と Bicycle のサブクラスのように振る舞うべきだからです。この 2 つのモジュールをそのテストに加えることで、MountainBike がサブクラスの真っ当な一員であると保証できます。
+
+```
+class MountainBikeTest < MiniTest::Unit::TestCase
+  include BicycleInterfaceTest
+  include BicycleSubclassTest
+
+  def setup
+    @bike = @object = MountainBike.new
+  end
+end
+```
+
+BicycleInterfaceTestBicycleSubclassTest が組み合わさることにより、サブクラスに共通する振る舞いをテストする際の苦痛を全て取り去ってくれます。これらのテストにより、サブクラスが標準から外れていないことを確信できる上、安全にサブクラスを作れるようになります。新たにサブクラスを書くときは、単にこれらのテストをインクルードすれば良いです。
+
+■ スーパークラスによる制約を確認する
+Bicycle クラスは、サブクラスが default_tire_size を実装していない場合エラーを起こすべきでしょう。この要件はサブクラスに課されるものの。実際に制約を課す振る舞いをするのは Bicycle です。それゆえ、テストは BicycleTest に直接書きます。
+
+```
+class BicycleTest < MiniTest::Unit::TestCase
+  include BicycleInterfaceTest
+
+  def setup
+    @bicycle = @object = Bicycle.new({tire_size: 0})
+  end
+
+  def test_forces_subclasses_to_implement_default_tire_size
+    assert_raise(NotImplementedError) { @bike.default_tire_size}
+  end
+end
+```
+
+tire_size 引数が必要なのは、Bicycle が抽象クラスであり new メッセージを受け取ることを予期していないからです。Bicycle には作成プロトコルはありません。実際のアプリケーションでは、Bicycle のインスタンスを作ることはあり得ないため、必要ないのです。しかし、上記のテストでは BicycleTest では、抽象クラスのインスタンスを明らかに作っています。
+
+この問題は、抽象クラスのテストにはいつでも起こり得ます。BicycleTest はテストを実行するためにオブジェクトを必要とします。最も明白な候補は Bicycle のインスタンスです。そかし、抽象クラスのインスタンスの作成は、難しいか、かなり難しいか、不可能かのどれかです。幸運なことにこのテストでは、Bicycle の作成プロトコルが tire_size を渡せば、Bicycle のインスタンスを作れるようになっていました。しかし、テスト可能なオブジェクトを作れるのは、こんなに簡単に行くものではありません。より洗練された戦略が必要とされる時もあるでしょう。幸いにも、この問題を簡単に乗り越える方法があります。
+
+現時点では。tire_size を引数で渡すことで問題なく動作しています。BicycleTest を実行すると、より抽象クラスらしい結果が表示されます。
+
+### 固有の振る舞いをテストする
+
+共通の振る舞いを分配し終えたところで、2 つのギャップが残っています。特化したテストは未だにありません。具象的なサブクラスによって用意されるものと、抽象的なスーパークラスに定義されているものの両方についてです。まずは前者を取り上げます。ここのサブクラスで特化しているものをテストします。その後視点を階層構造の上部へと移し、Bicycle に固有の振る舞いをテストしていきましょう。
+
+■ 具象サブクラスの振る舞いをテストする
+共有されたモジュールによって振る舞いの大部分は証明されています。残るテストは、RoadBike で特化したところです。
+これらの特化した部位をテストする際に重要なのは、スーパクラスの知識をテスト内に埋め込まないことです。例えば、RoadBike は local_spares を実装 y し、spares にも応答します。RoadBikeTest は意図的に spares メソッドの存在を無視していることを伝えつつ、local_spares が動作することを保証するべきです。共有された、BicycleInterfaceTest は、RoadBike が正しく spares に応答することを証明しているので、このテスト内でそれを直接参照することは冗長であり、結局は制限になります。
+一方で local_spares メソッドは、明らかに RoadBike の責任です。次の 9 行目で、この特化した箇所を直接 RoadBikeTest 内でテストしています。
+
+```
+class RoadBikeTest < MiniTest::Unit::TestCase
+  include BicycleInterfaceTest
+  include BicycleSubclassTest
+
+  def setup
+    @bike = @object = RoadBike.new(tape_color: 'red')
+  end
+
+  def test_puts_tape_color_in_local_spares
+    assert_equal 'red', @bike.local_spares[:tape_color]
+  end
+end
+```
+
+■ 抽象スーパークラスの振る舞いをテストする
+これでサブクラスの特化した箇所はテストできました。今度は、スーパークラスのテストをします。Bicycle は抽象スーパークラスなので、Bicycle のインスタンスを作るのは難しいだけでなく、そのインスタンスはテストを実行するために必要な全ての振る舞いを持たない可能性もあります。
+幸いにも、設計スキルで問題は解決できます。Bicycle は具象的な特化を獲得するためにテンプレートメソッドを使っているので、通常はサブクラスによって提供される振る舞いをスタブできます。さらに良いことに、リスコフの置換原則を理解したので、このテストだけに使われるサブクラスを作ることで、テスト可能な Bicycle のインスタンスを簡単に作れます。
+
+次のテストは、正しくそのような戦略をとったものです。1 行目で新しいクラスである StubbedBike を、Bicycle のサブクラスとして定義しています。テストではこのクラスのインスタンスを作り、サブクラスによる local_spares への寄与を、Bicycle が spares に正しく含められているかの証明に使っています。
+
+```
+class BicycleTest < MiniTest::Util::TestCase
+  include BicycleinterfaceTest
+
+  def setup
+    @bike = @object = Bicycle.new({ tire_size: 0 })
+    @stubbed_bike = StubbedBike.new
+  end
+
+  def test_forces_subclasses_to_implement_default_tire_size
+    assert_raises(NotImplementedError) do
+      @bike.default_tire_size
+    end
+  end
+
+  def test_includes_local_spares_in_spares
+    assert_equal @stubbed_bike.spares, {  tire_size: 0,
+                                          chain: '10-speed',
+                                          saddle: 'painful' }
+  end
+end
+```
+
+スタブを用意するためにサブクラスを作るというアイデアは、多くの状況で役に立ちます。リスコフの置換原則を破らない限り、どのテストでもこのテクニックを使えます。
+BicycleTest を実行すると、spares の一覧にサブクラスの寄与が含まれることが証明されます。
+
+StubbedBike が古くなってしまい、BicycleTest が失敗するべき時に通ってしまうようになることを恐れる時、その解決方法はすぐ近くにあります。すでに共通の BicycleSubclassTest があります。BicycleSubclassTest を SubbedBike の継続的な正しさを保証するために使います。
+
+```
+# このテストが期待するインターフェースを、テストダブルが守ることを証明する
+class StubbedBikeTest < MiniTest::Unit::TestCase
+  include BicycleSubclassTest
+
+  def setup
+    @object = StubbedBike.new
+  end
+end
+```
+
+この変更を加えて Bicycle Test を実行すれば、追加の結果が得られます。
+注意深く書かれた継承構造のテストは簡単です。共有可能なテストを 1 つ、全体のインターフェースに対して書き、もう 1 つをサブクラスの責任に対して書きます。
+特に注意すべきなのは、サブクラスの特化をテストする時です。スーパークラスの知識がサブクラスのテストに漏れてこないように注意しましょう。
+
+抽象スーパークラスのテストは難しいものです。ですから、リスコフの置換原則を活用しましょう。リスコフの置換原則を最大限活用し、テスト専用のサブクラスを使う時には、それらサブクラスにもサブクラスの責任のテストを適用するようにしましょう。
